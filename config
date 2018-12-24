@@ -1,0 +1,11 @@
+{
+	".url": {
+		"NAME.NEYKOV.syno.Magnet": {
+			"type": "legacy",
+			"title": "Magnet Download",
+			"desc": "Add magnet links to Download Station",
+			"icon": "images/icon_{0}.png",
+			"url": "/webman/3rdparty/SynoMagnet/index.html"
+		}
+	}
+}

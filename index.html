@@ -1,0 +1,202 @@
+<html>
+  <head>
+    <meta charset="utf-8"/>
+    <style type="text/css">
+      #register, #loading, #help-alias, #help-not-supported {
+      	display: none;
+      }
+      .register #register, 
+			.loading #loading, 
+			.help-alias #help-alias, 
+			.help-not-supported #help-not-supported {
+				display: block;
+			}
+
+    	#download {
+    		position:fixed; 
+    		top:0px; 
+    		left:0px; 
+    		bottom:0px; 
+    		right:0px; 
+    		width:100%; 
+    		height:100%; 
+    		border:none; 
+    		margin:0; 
+    		padding:0; 
+    		overflow:hidden; 
+    		z-index:999999;
+    	}
+    </style>
+    <script>
+			// ============= Utils ===========
+			function $(id) {
+				return document.getElementById(id);
+			}
+			function show(elName) {
+				document.body.className = elName
+			}
+			async function delay(ms) {
+				return await new Promise(resolve => setTimeout(resolve, ms));
+			}
+			async function post(url, headers, params) {
+				urlEncodedParams = Object.keys(params || {}).map(function(key) {
+					return encodeURIComponent(key) + "=" + encodeURIComponent(params[key]);
+				}).join('&');
+
+				let resp = await fetch(url, {
+					method: 'POST',
+					headers: headers || {},
+					body: urlEncodedParams
+				});
+				
+				let data = await resp.json();
+				// syno specific flag
+				if (data.success) {
+					return data;
+				} else {
+					throw data;
+				}
+			}
+
+			// ============= Control Panel ===========
+			var DOWNLOAD_PREFIX = 'download=';
+			function registerHandler() {
+				var baseUrl = window.location.href
+				if (baseUrl.indexOf('#') != -1) {
+					baseUrl = baseUrl.substring(0, baseUrl.indexOf('#'));
+				}
+				var handlerUrl = baseUrl + '#' + DOWNLOAD_PREFIX + '%s';
+				navigator.registerProtocolHandler(
+					"magnet", handlerUrl, "Download Station");
+			}
+
+			// ============= Download Station ===========
+			function getMagnetLink(){
+				if (window.location.hash) {
+					var hash = window.location.hash.substring(1);
+					if (hash.indexOf(DOWNLOAD_PREFIX) == 0) {
+						return decodeURIComponent(hash.substring(DOWNLOAD_PREFIX.length));
+					}
+				}
+				return null;
+			}
+			async function getSynoToken() {
+				try {
+					let loginData = await post("/webman/login.cgi");
+					return loginData.SynoToken;
+				} catch(error) {
+					if (error.reason == 'error_cantlogin') {
+						return null;
+					} else {
+						throw error;
+					}
+				}
+			}
+			function openSynoFrame(url) {
+				frame = $('download')
+				if (frame) {
+					frame.src = url;
+				} else {
+					frame = document.createElement('iframe');
+					frame.id = 'download';
+					frame.src = url;
+					document.body.appendChild(frame);
+				}
+			}
+			async function waitForSuccessfulLogin() {
+				while (true) {
+					let token = await getSynoToken();
+					if (token) {
+						return token;
+					}
+					await delay(1000);
+				}
+			}
+			async function authenticate() {
+				let token = await getSynoToken();
+				if (token) {
+					return token;
+				} else {
+					openSynoFrame(window.location.origin);
+					return await waitForSuccessfulLogin();
+				}
+			}
+			async function downloadMagnetLink(magnetUri) {
+				show('loading');
+				let synoToken = await authenticate();
+				var headers = {
+					"X-SYNO-TOKEN": synoToken,
+					"Content-type": "application/x-www-form-urlencoded"
+				};
+				async function synoEntry(params) {
+					let resp = await post('/webapi/entry.cgi', headers, params);
+					return resp.data
+				}
+
+				// Get the default target folder for saving files
+				let locationData = await synoEntry({
+					api: 'SYNO.DownloadStation2.Settings.Location',
+					method: 'get',
+					version: 1
+				});
+				downloadDestination = locationData.default_destination;
+				
+				// Register the magnet link in "Download Station" in parallel to opening the app below
+				synoEntry({
+					type: '"url"',
+					destination: '"' + downloadDestination + '"',
+					create_list: 'false',
+					url: '["' + magnet + '"]',
+					api: 'SYNO.DownloadStation2.Task',
+					method: 'create',
+					version: 2
+				});
+							
+				// Find the direct URL to "Download Station" in "Application Portal"
+				let appData = await synoEntry({
+					api: 'SYNO.Core.AppPortal',
+					method: 'list',
+					version: 2
+				});
+				let downApp = appData.portal.find(app => app.id == "SYNO.SDS.DownloadStation.Application")
+				if (downApp && downApp.alias) {
+					openSynoFrame(window.location.origin + '/' + downApp.alias);
+				} else {
+					// Download Station is not registered in "Application Portal"
+					show('help-alias');
+					alert('Download task created');
+				}
+			}
+			function init() {
+				magnet = getMagnetLink();
+				if (magnet) {
+					// We are handling a magnet download
+					downloadMagnetLink(magnet);
+				} else if (navigator.registerProtocolHandler) {
+					// Opened in control panel
+					let btn = $('register');
+					btn.onclick = registerHandler
+					show('register');
+				} else {
+					show('help-not-supported');
+				}
+			}
+			window.onload = init;
+    </script>
+  </head>
+  <body>
+		<button id="register">Register Magnet Handler</button>
+		<div id="loading">Creating download task...</div>
+		<div id="help-alias">
+			To have Download Station open here after creating the download task go to 
+			Control Panel -> Application Portal, edit "Download Station" entry and 
+			toggle "Enable customized alias".
+		</div>
+		<div id="help-not-supported">
+			Your browser is not supported. See the
+			<a href="https://developer.mozilla.org/en-US/docs/Web/API/Navigator/registerProtocolHandler#Browser_compatibility" taget="_blank">
+				list of supported browsers
+			</a>.
+		</div>
+  <body>
+</html>
